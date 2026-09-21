@@ -1414,6 +1414,43 @@ END:VCALENDAR</cal:calendar-data>
       expect(http.request).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps calendars with an omitted component set but filters an empty set', async () => {
+      const componentVariants = `<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response>
+    <d:href>/calendars/implicit/</d:href>
+    <d:propstat><d:prop>
+      <d:displayname>Implicit event support</d:displayname>
+      <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
+    </d:prop></d:propstat>
+  </d:response>
+  <d:response>
+    <d:href>/calendars/empty/</d:href>
+    <d:propstat><d:prop>
+      <d:displayname>Invalid empty component set</d:displayname>
+      <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
+      <cal:supported-calendar-component-set/>
+    </d:prop></d:propstat>
+  </d:response>
+</d:multistatus>`;
+      const http = makeHttp({
+        'https://cal.example.com/home/|1': componentVariants,
+      });
+
+      const result = await getLoadOptions()(
+        {
+          serverUrl: 'https://cal.example.com/home/',
+          username: 'user',
+          password: 'pass',
+        } as any,
+        http as any,
+      );
+
+      expect(result).toEqual([
+        { label: 'Implicit event support', value: '/calendars/implicit/' },
+      ]);
+    });
+
     it('discovers calendars from a Nextcloud root URL via principal + calendar-home-set', async () => {
       const http = makeHttp({
         // Step 1: Depth:1 on the root lists only non-calendar collections.

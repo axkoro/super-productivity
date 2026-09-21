@@ -568,24 +568,18 @@ const parseCalendarList = (xml: string): CalendarInfo[] => {
     const displayName =
       getXmlText(resp, 'displayname') || href.split('/').filter(Boolean).pop() || href;
 
-    // Check supported components
-    let supportsVevent = true; // Default to true if not specified
+    // RFC 4791 section 5.2.3 says an absent component set accepts all types.
+    // If the property is present, however, its advertised components are
+    // authoritative (and the schema requires at least one <comp> child).
     const compSet = resp.getElementsByTagNameNS(
       CALDAV_NS,
       'supported-calendar-component-set',
     )[0];
-    if (compSet) {
-      const comps = compSet.getElementsByTagNameNS(CALDAV_NS, 'comp');
-      if (comps.length > 0) {
-        supportsVevent = false;
-        for (let j = 0; j < comps.length; j++) {
-          if (comps[j].getAttribute('name') === 'VEVENT') {
-            supportsVevent = true;
-            break;
-          }
-        }
-      }
-    }
+    const supportsVevent =
+      !compSet ||
+      Array.from(compSet.getElementsByTagNameNS(CALDAV_NS, 'comp')).some(
+        (comp) => comp.getAttribute('name')?.toUpperCase() === 'VEVENT',
+      );
 
     calendars.push({ href, displayName, supportsVevent });
   }
