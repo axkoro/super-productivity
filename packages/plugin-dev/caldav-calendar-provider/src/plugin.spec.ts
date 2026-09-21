@@ -609,6 +609,37 @@ END:VCALENDAR</cal:calendar-data>
       }
     });
 
+    it('returns events from every successfully queried calendar', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-15T00:00:00Z'));
+      try {
+        const mockHttp = {
+          request: vi.fn().mockResolvedValue(NEXTCLOUD_REPORT_RESPONSE),
+        };
+
+        const events = await definition.getNewIssuesForBacklog!(
+          {
+            serverUrl: 'https://example.com/dav',
+            username: 'admin',
+            password: 'pass',
+            readCalendarIds: ['/calendars/work/', '/calendars/personal/'],
+          } as any,
+          mockHttp as any,
+        );
+
+        expect(events).toHaveLength(2);
+        expect(events.map((event) => event.id)).toEqual(
+          expect.arrayContaining([
+            expect.stringContaining('/calendars/work/::'),
+            expect.stringContaining('/calendars/personal/::'),
+          ]),
+        );
+        expect(mockHttp.request).toHaveBeenCalledTimes(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('queries a discovered iCloud calendar on its partition host', async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-03-15T00:00:00Z'));
