@@ -9,6 +9,9 @@ import ICAL from 'ical.js';
 
 declare const PluginAPI: {
   registerIssueProvider(definition: IssueProviderPluginDefinition): void;
+  log: {
+    warn(...args: unknown[]): void;
+  };
 };
 
 // --- Config ---
@@ -1088,10 +1091,31 @@ const fetchEvents = async (
 ): Promise<PluginSearchResult[]> => {
   const calendarIds = getReadCalendarIds(cfg);
   if (calendarIds.length === 0) return [];
-  const results = await Promise.all(
+  const results = await Promise.allSettled(
     calendarIds.map((calId) => fetchEventsForCalendar(http, calId, cfg)),
   );
-  let merged = results.flat().sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+  const failed = results.filter((result) => result.status === 'rejected');
+  results.forEach((result, index) => {
+    if (result.status !== 'rejected') return;
+    const status =
+      typeof result.reason === 'object' &&
+      result.reason !== null &&
+      'status' in result.reason &&
+      typeof result.reason.status === 'number'
+        ? ` (HTTP ${result.reason.status})`
+        : '';
+    PluginAPI.log.warn(
+      `[CalDAV] Failed to query calendar ${calendarIds[index]}${status}`,
+    );
+  });
+  if (failed.length === results.length) {
+    throw failed[0].reason;
+  }
+
+  let merged = results
+    .filter((result) => result.status === 'fulfilled')
+    .flatMap((result) => result.value)
+    .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
   if (opts?.maxResults) {
     merged = merged.slice(0, opts.maxResults);
   }

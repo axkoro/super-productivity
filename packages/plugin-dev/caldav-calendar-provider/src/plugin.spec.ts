@@ -566,6 +566,71 @@ END:VCALENDAR</cal:calendar-data>
       }
     });
 
+    it('returns successful calendar events when another selected calendar fails', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-15T00:00:00Z'));
+      const pluginLog = (globalThis as any).PluginAPI.log;
+      pluginLog.warn.mockClear();
+      try {
+        const mockHttp = {
+          get: vi.fn(),
+          post: vi.fn(),
+          put: vi.fn(),
+          patch: vi.fn(),
+          delete: vi.fn(),
+          request: vi.fn(async (_method: string, url: string) => {
+            if (url.endsWith('/broken/')) {
+              throw Object.assign(new Error('Forbidden'), { status: 403 });
+            }
+            return NEXTCLOUD_REPORT_RESPONSE;
+          }),
+        };
+
+        const events = await definition.getNewIssuesForBacklog!(
+          {
+            serverUrl: 'https://example.com/dav',
+            username: 'admin',
+            password: 'pass',
+            readCalendarIds: [
+              '/remote.php/dav/calendars/admin/personal/',
+              '/remote.php/dav/calendars/admin/broken/',
+            ],
+          } as any,
+          mockHttp as any,
+        );
+
+        expect(events).toHaveLength(1);
+        expect(events[0].title).toBe('Test Meeting');
+        expect(pluginLog.warn).toHaveBeenCalledWith(
+          '[CalDAV] Failed to query calendar /remote.php/dav/calendars/admin/broken/ (HTTP 403)',
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('still rejects when every selected calendar fails', async () => {
+      const pluginLog = (globalThis as any).PluginAPI.log;
+      pluginLog.warn.mockClear();
+      const failure = Object.assign(new Error('Bad request'), { status: 400 });
+      const mockHttp = {
+        request: vi.fn().mockRejectedValue(failure),
+      };
+
+      await expect(
+        definition.getNewIssuesForBacklog!(
+          {
+            serverUrl: 'https://example.com/dav',
+            username: 'admin',
+            password: 'pass',
+            readCalendarIds: ['/calendars/one/', '/calendars/two/'],
+          } as any,
+          mockHttp as any,
+        ),
+      ).rejects.toBe(failure);
+      expect(pluginLog.warn).toHaveBeenCalledTimes(2);
+    });
+
     // Regression coverage for issue #7492 — recurring CalDAV events parsed as one event.
     describe('RRULE expansion (issue #7492)', () => {
       const wrapMultistatus = (icsBody: string, eventPath = 'weekly.ics'): string =>
