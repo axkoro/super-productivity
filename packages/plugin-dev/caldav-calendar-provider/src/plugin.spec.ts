@@ -609,6 +609,33 @@ END:VCALENDAR</cal:calendar-data>
       }
     });
 
+    it('queries a discovered iCloud calendar on its partition host', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-03-15T00:00:00Z'));
+      try {
+        const request = vi.fn().mockResolvedValue(NEXTCLOUD_REPORT_RESPONSE);
+        const events = await definition.getNewIssuesForBacklog!(
+          {
+            serverUrl: 'https://caldav.icloud.com/',
+            username: 'user@icloud.com',
+            password: 'app-password',
+            readCalendarIds: ['https://p148-caldav.icloud.com/123456/calendars/home/'],
+          } as any,
+          { request } as any,
+        );
+
+        expect(events).toHaveLength(1);
+        expect(request).toHaveBeenCalledWith(
+          'REPORT',
+          'https://p148-caldav.icloud.com/123456/calendars/home/',
+          expect.any(String),
+          expect.objectContaining({ responseType: 'text' }),
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('still rejects when every selected calendar fails', async () => {
       const pluginLog = (globalThis as any).PluginAPI.log;
       pluginLog.warn.mockClear();
@@ -1503,6 +1530,79 @@ END:VCALENDAR</cal:calendar-data>
       ]);
     });
 
+    it('follows iCloud discovery to its HTTPS partition host and keeps that origin', async () => {
+      const iCloudPrincipal = `<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response><d:propstat><d:prop>
+    <d:current-user-principal><d:href>/123456/principal/</d:href></d:current-user-principal>
+  </d:prop></d:propstat></d:response>
+</d:multistatus>`;
+      const iCloudHome = `<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response><d:propstat><d:prop>
+    <cal:calendar-home-set><d:href>https://p148-caldav.icloud.com/123456/calendars/</d:href></cal:calendar-home-set>
+  </d:prop></d:propstat></d:response>
+</d:multistatus>`;
+      const iCloudCalendars = `<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response><d:href>/123456/calendars/home/</d:href><d:propstat><d:prop>
+    <d:displayname>Home</d:displayname>
+    <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
+    <cal:supported-calendar-component-set><cal:comp name="VEVENT"/></cal:supported-calendar-component-set>
+  </d:prop></d:propstat></d:response>
+</d:multistatus>`;
+      const http = makeHttp({
+        'https://caldav.icloud.com/|0': iCloudPrincipal,
+        'https://caldav.icloud.com/123456/principal/|0': iCloudHome,
+        'https://p148-caldav.icloud.com/123456/calendars/|1': iCloudCalendars,
+      });
+
+      const result = await getLoadOptions()(
+        {
+          serverUrl: 'https://caldav.icloud.com/',
+          username: 'user@icloud.com',
+          password: 'app-password',
+        } as any,
+        http as any,
+      );
+
+      expect(result).toEqual([
+        {
+          label: 'Home',
+          value: 'https://p148-caldav.icloud.com/123456/calendars/home/',
+        },
+      ]);
+      expect(http.request.mock.calls.map((call: unknown[]) => call[1])).toEqual([
+        'https://caldav.icloud.com/',
+        'https://caldav.icloud.com/',
+        'https://caldav.icloud.com/123456/principal/',
+        'https://p148-caldav.icloud.com/123456/calendars/',
+      ]);
+    });
+
+    it('uses an already-known iCloud partition calendar home directly', async () => {
+      const iCloudCalendars = CALENDAR_LIST_XML.split(
+        '/remote.php/dav/calendars/admin/',
+      ).join('/123456/calendars/');
+      const http = makeHttp({
+        'https://p148-caldav.icloud.com/123456/calendars/|1': iCloudCalendars,
+      });
+
+      const result = await getLoadOptions()(
+        {
+          serverUrl: 'https://p148-caldav.icloud.com/123456/calendars/',
+          username: 'user@icloud.com',
+          password: 'app-password',
+        } as any,
+        http as any,
+      );
+
+      expect(result).toEqual([
+        { label: 'Personal', value: '/123456/calendars/personal/' },
+      ]);
+      expect(http.request).toHaveBeenCalledTimes(1);
+    });
+
     it('returns [] when neither calendars nor a principal can be resolved', async () => {
       const EMPTY_PROPS_XML = `<?xml version="1.0"?>
 <d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
@@ -1580,6 +1680,36 @@ END:VCALENDAR</cal:calendar-data>
       expect(calledOrigins.every((o: string) => o === 'https://nc.example.com')).toBe(
         true,
       );
+    });
+
+    it.each([
+      'http://p148-caldav.icloud.com/123456/calendars/',
+      'https://p148-caldav.icloud.com:8443/123456/calendars/',
+      'https://calendar.icloud.com/123456/calendars/',
+      'https://p148-caldav.icloud.com.evil.example/123456/calendars/',
+    ])('refuses an invalid iCloud partition home %s', async (homeUrl) => {
+      const advertisedHome = `<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav">
+  <d:response><d:propstat><d:prop>
+    <cal:calendar-home-set><d:href>${homeUrl}</d:href></cal:calendar-home-set>
+  </d:prop></d:propstat></d:response>
+</d:multistatus>`;
+      const http = makeHttp({
+        'https://caldav.icloud.com/|1': NON_CALENDAR_COLLECTION_XML,
+        'https://caldav.icloud.com/|0': advertisedHome,
+      });
+
+      await expect(
+        getLoadOptions()(
+          {
+            serverUrl: 'https://caldav.icloud.com/',
+            username: 'user@icloud.com',
+            password: 'app-password',
+          } as any,
+          http as any,
+        ),
+      ).rejects.toThrow('[CalDAV] Refusing cross-origin href');
+      expect(http.request).toHaveBeenCalledTimes(2);
     });
   });
 });

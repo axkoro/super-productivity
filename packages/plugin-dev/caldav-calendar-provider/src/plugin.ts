@@ -629,19 +629,30 @@ const caldavHeaders = (extra?: Record<string, string>): Record<string, string> =
 });
 
 /**
+ * Apple delegates calendar homes from caldav.icloud.com to a numbered partition
+ * host. This is the only cross-origin credential delegation we can verify
+ * without trusting an arbitrary server-supplied hostname.
+ */
+const isTrustedICloudPartition = (server: URL, resolved: URL): boolean =>
+  server.origin.toLowerCase() === 'https://caldav.icloud.com' &&
+  resolved.protocol === 'https:' &&
+  resolved.port === '' &&
+  /^p\d+-caldav\.icloud\.com$/i.test(resolved.hostname);
+
+/**
  * Resolve a server-supplied href against the configured server origin and
- * refuse anything that escapes it. Discovery follows hrefs that the (untrusted)
- * server controls — principal, calendar-home-set — so this is the SSRF
- * boundary: credentials are attached to every request and must never be sent
- * off-origin. Resolving via the URL constructor handles relative, absolute, and
- * protocol-relative (`//host`) forms uniformly; a prefix sniff + string concat
- * would mis-handle `//host` and uppercase schemes. The href is omitted from the
- * error (untrusted content; the log is exportable).
+ * refuse anything that escapes it, except iCloud's validated partition-host
+ * handoff. Discovery follows hrefs that the server controls — principal,
+ * calendar-home-set — so this is the SSRF boundary: credentials are attached
+ * to every request and must never be sent to an arbitrary origin. Resolving via
+ * the URL constructor handles relative, absolute, and protocol-relative
+ * (`//host`) forms uniformly. The href is omitted from the error because log
+ * history is exportable.
  */
 const resolveHref = (cfg: CaldavCalendarConfig, href: string): string => {
-  const serverOrigin = new URL(getServerUrl(cfg)).origin;
-  const resolved = new URL(href, serverOrigin + '/');
-  if (resolved.origin !== serverOrigin) {
+  const server = new URL(getServerUrl(cfg));
+  const resolved = new URL(href, server.origin + '/');
+  if (resolved.origin !== server.origin && !isTrustedICloudPartition(server, resolved)) {
     throw new Error('[CalDAV] Refusing cross-origin href');
   }
   return resolved.toString();
@@ -686,11 +697,23 @@ const propfind = (
 const enumerateCalendars = async (
   http: PluginHttp,
   url: string,
+  cfg: CaldavCalendarConfig,
 ): Promise<{ label: string; value: string }[]> => {
   const xml = await propfind(http, url, buildPropfindBody(), '1');
+  const configuredOrigin = new URL(getServerUrl(cfg)).origin;
+  const collectionOrigin = new URL(url).origin;
   return parseCalendarList(xml)
     .filter((c) => c.supportsVevent)
-    .map((c) => ({ label: c.displayName, value: c.href }));
+    .map((c) => ({
+      label: c.displayName,
+      // Same-origin IDs keep their existing representation. A calendar found
+      // on an iCloud partition needs an absolute ID so later REPORT and write
+      // requests do not resolve its path back onto caldav.icloud.com.
+      value:
+        collectionOrigin === configuredOrigin
+          ? c.href
+          : resolveHref(cfg, new URL(c.href, url).toString()),
+    }));
 };
 
 /**
@@ -736,7 +759,7 @@ const discoverCalendars = async (
   const enteredUrl = ensureTrailingSlash(getServerUrl(cfg));
 
   try {
-    const direct = await enumerateCalendars(http, enteredUrl);
+    const direct = await enumerateCalendars(http, enteredUrl, cfg);
     if (direct.length) return direct;
   } catch {
     // The entered URL may be a principal/root collection that rejects Depth:1.
@@ -745,7 +768,7 @@ const discoverCalendars = async (
 
   const home = await resolveCalendarHome(http, cfg, enteredUrl);
   if (!home) return [];
-  return enumerateCalendars(http, home);
+  return enumerateCalendars(http, home, cfg);
 };
 
 // --- ical.js-based RRULE expansion ---
