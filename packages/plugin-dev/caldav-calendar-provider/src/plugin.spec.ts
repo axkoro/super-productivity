@@ -486,6 +486,71 @@ describe('CalDAV Calendar Plugin', () => {
     });
   });
 
+  describe('iCloud partition event URLs', () => {
+    const config = {
+      serverUrl: 'https://caldav.icloud.com/',
+    };
+    const calendarHref = 'https://p148-caldav.icloud.com/123456/calendars/work/';
+    const eventHref = '/123456/calendars/work/event.ics';
+    const issueId = `${calendarHref}::${eventHref}`;
+    const eventUrl = `https://p148-caldav.icloud.com${eventHref}`;
+    const ical = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VEVENT',
+      'UID:event',
+      'DTSTART:20260320T100000Z',
+      'DTEND:20260320T110000Z',
+      'SUMMARY:Partition event',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const makeHttp = () => ({
+      get: vi.fn().mockResolvedValue(ical),
+      put: vi.fn(),
+      delete: vi.fn(),
+    });
+
+    it('gets the event from its partition host', async () => {
+      const http = makeHttp();
+
+      await definition.getById!(issueId, config as any, http as any);
+
+      expect(http.get).toHaveBeenCalledWith(eventUrl, { responseType: 'text' });
+    });
+
+    it('links to the event on its partition host', () => {
+      expect(definition.getIssueLink!(issueId, config as any)).toBe(eventUrl);
+    });
+
+    it('updates the event on its partition host', async () => {
+      const http = makeHttp();
+
+      await definition.updateIssue!(
+        issueId,
+        { summary: 'Updated' },
+        config as any,
+        http as any,
+      );
+
+      expect(http.get).toHaveBeenCalledWith(eventUrl, { responseType: 'text' });
+      expect(http.put).toHaveBeenCalledWith(
+        eventUrl,
+        expect.any(String),
+        expect.any(Object),
+      );
+    });
+
+    it('deletes the event from its partition host', async () => {
+      const http = makeHttp();
+
+      await definition.deleteIssue!(issueId, config as any, http as any);
+
+      expect(http.delete).toHaveBeenCalledWith(eventUrl, { responseType: 'text' });
+    });
+  });
+
   describe('getHeaders', () => {
     it('should return Basic auth header', async () => {
       const headers = await definition.getHeaders({

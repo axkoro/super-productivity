@@ -658,6 +658,16 @@ const resolveHref = (cfg: CaldavCalendarConfig, href: string): string => {
   return resolved.toString();
 };
 
+/** Resolve an event href relative to the calendar that returned it. */
+const resolveEventUrl = (
+  cfg: CaldavCalendarConfig,
+  calendarHref: string,
+  eventHref: string,
+): string => {
+  const calendarUrl = ensureTrailingSlash(resolveHref(cfg, calendarHref));
+  return resolveHref(cfg, new URL(eventHref, calendarUrl).toString());
+};
+
 /** Build PROPFIND body to bootstrap discovery: principal + calendar-home-set */
 const buildDiscoveryPropfindBody = (): string =>
   `<?xml version="1.0" encoding="UTF-8"?>
@@ -1294,8 +1304,11 @@ PluginAPI.registerIssueProvider({
     http: PluginHttp,
   ): Promise<PluginIssue> {
     const cfg = config as unknown as CaldavCalendarConfig;
-    const { eventHref, occurrenceMs } = parseCompoundId(issueId, getWriteCalendarId(cfg));
-    const eventUrl = resolveHref(cfg, eventHref);
+    const { calendarHref, eventHref, occurrenceMs } = parseCompoundId(
+      issueId,
+      getWriteCalendarId(cfg),
+    );
+    const eventUrl = resolveEventUrl(cfg, calendarHref, eventHref);
     const icalData = await http.get<string>(eventUrl, { responseType: 'text' });
     const events = parseVEvents(icalData);
     const event = events[0];
@@ -1369,8 +1382,8 @@ PluginAPI.registerIssueProvider({
 
   getIssueLink(issueId: string, config: Record<string, unknown>): string {
     const cfg = config as unknown as CaldavCalendarConfig;
-    const { eventHref } = parseCompoundId(issueId, getWriteCalendarId(cfg));
-    return resolveHref(cfg, eventHref);
+    const { calendarHref, eventHref } = parseCompoundId(issueId, getWriteCalendarId(cfg));
+    return resolveEventUrl(cfg, calendarHref, eventHref);
   },
 
   async testConnection(
@@ -1464,10 +1477,13 @@ PluginAPI.registerIssueProvider({
     http: PluginHttp,
   ): Promise<void> {
     const cfg = config as unknown as CaldavCalendarConfig;
-    const { eventHref, occurrenceMs } = parseCompoundId(id, getWriteCalendarId(cfg));
+    const { calendarHref, eventHref, occurrenceMs } = parseCompoundId(
+      id,
+      getWriteCalendarId(cfg),
+    );
     // Editing one occurrence would rewrite the shared master (whole series).
     if (occurrenceMs !== undefined) throw unsupportedOccurrenceWriteError('edit');
-    const eventUrl = resolveHref(cfg, eventHref);
+    const eventUrl = resolveEventUrl(cfg, calendarHref, eventHref);
 
     // Fetch current iCal data
     const currentIcal = await http.get<string>(eventUrl, { responseType: 'text' });
@@ -1724,10 +1740,13 @@ PluginAPI.registerIssueProvider({
     http: PluginHttp,
   ): Promise<void> {
     const cfg = config as unknown as CaldavCalendarConfig;
-    const { eventHref, occurrenceMs } = parseCompoundId(id, getWriteCalendarId(cfg));
+    const { calendarHref, eventHref, occurrenceMs } = parseCompoundId(
+      id,
+      getWriteCalendarId(cfg),
+    );
     // Deleting one occurrence would DELETE the shared master (whole series).
     if (occurrenceMs !== undefined) throw unsupportedOccurrenceWriteError('delete');
-    const eventUrl = resolveHref(cfg, eventHref);
+    const eventUrl = resolveEventUrl(cfg, calendarHref, eventHref);
     await http.delete(eventUrl, { responseType: 'text' });
   },
 });
