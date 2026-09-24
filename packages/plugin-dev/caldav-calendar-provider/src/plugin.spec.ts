@@ -677,6 +677,26 @@ END:VCALENDAR</cal:calendar-data>
       }
     });
 
+    it('rejects partial results for ambiguous failures so the host keeps its cache', async () => {
+      const failure = Object.assign(new Error('Bad gateway'), { status: 502 });
+      const mockHttp = {
+        request: vi.fn(async (_method: string, url: string) => {
+          if (url.endsWith('/unavailable/')) throw failure;
+          return NEXTCLOUD_REPORT_RESPONSE;
+        }),
+      };
+
+      await expect(
+        definition.getNewIssuesForBacklog!(
+          {
+            serverUrl: 'https://example.com/dav',
+            readCalendarIds: ['/calendars/work/', '/calendars/unavailable/'],
+          } as any,
+          mockHttp as any,
+        ),
+      ).rejects.toBe(failure);
+    });
+
     it('returns events from every successfully queried calendar', async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-03-15T00:00:00Z'));

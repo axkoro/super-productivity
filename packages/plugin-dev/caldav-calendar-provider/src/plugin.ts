@@ -1138,6 +1138,14 @@ const fetchEvents = async (
   if (failed.length === results.length) {
     throw failed[0].reason;
   }
+  const ambiguousFailure = failed.find(
+    (result) => ![400, 403, 404].some((status) => isHttpStatus(result.reason, status)),
+  );
+  if (ambiguousFailure) {
+    // Preserve the host's complete cached snapshot for timeouts and temporary
+    // server failures instead of replacing it with incomplete fresh results.
+    throw ambiguousFailure.reason;
+  }
 
   let merged = results
     .filter((result) => result.status === 'fulfilled')
