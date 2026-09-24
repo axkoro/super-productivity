@@ -1132,7 +1132,7 @@ const fetchEvents = async (
         ? ` (HTTP ${result.reason.status})`
         : '';
     PluginAPI.log.warn(
-      `[CalDAV] Failed to query calendar ${calendarIds[index]}${status}`,
+      `[CalDAV] Failed to query calendar ${index + 1}/${calendarIds.length}${status}`,
     );
   });
   if (failed.length === results.length) {

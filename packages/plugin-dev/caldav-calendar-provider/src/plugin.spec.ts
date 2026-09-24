@@ -667,7 +667,10 @@ END:VCALENDAR</cal:calendar-data>
         expect(events).toHaveLength(1);
         expect(events[0].title).toBe('Test Meeting');
         expect(pluginLog.warn).toHaveBeenCalledWith(
-          '[CalDAV] Failed to query calendar /remote.php/dav/calendars/admin/broken/ (HTTP 403)',
+          '[CalDAV] Failed to query calendar 2/2 (HTTP 403)',
+        );
+        expect(pluginLog.warn).not.toHaveBeenCalledWith(
+          expect.stringContaining('/remote.php/dav/calendars/admin/broken/'),
         );
       } finally {
         vi.useRealTimers();
